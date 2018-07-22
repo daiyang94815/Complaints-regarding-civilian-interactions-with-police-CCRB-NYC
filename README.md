@@ -1,1 +1,2 @@
-# Complaints-reguarding-civilian-interactions-with-police-CCRB-NYC-
+# Complaints reguarding civilian interactions with police (CCRB NYC)
+The Civilian Complaint Review Board (CCRB) of New York City releases anonymized data about complaints it has received reguarding civilian interactions with police. Besides their aggregated reporting data, they release [record-level data as an Excel spreadsheet](http://www1.nyc.gov/assets/ccrb/downloads/excel/ccrb_datatransparencyinitiative_20170207.xlsx). Download this data. A description of the data appears in the first sheet of the spreadsheet, which could be useful to your analysis.
