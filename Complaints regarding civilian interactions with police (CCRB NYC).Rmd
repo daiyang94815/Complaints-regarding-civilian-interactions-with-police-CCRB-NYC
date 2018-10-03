@@ -1,0 +1,140 @@
+---
+title: "Complaints regarding civilian interactions with police (CCRB NYC)"
+---
+The Civilian Complaint Review Board (CCRB) of New York City releases anonymized data about complaints it has received reguarding civilian interactions with police. Besides their aggregated reporting data, they release [record-level data as an Excel spreadsheet](http://www1.nyc.gov/assets/ccrb/downloads/excel/ccrb_datatransparencyinitiative_20170207.xlsx). Download this data. A description of the data appears in the first sheet of the spreadsheet, which could be useful to your analysis. 
+```{r include=FALSE}
+library(readxl)
+library(tidyverse)
+library(modelr)
+options(digits=10)
+```
+
+```{r eval=FALSE}
+if (!file.exists("ccrb_datatransparencyinitiative_20170207.xlsx")) download.file('http://www1.nyc.gov/assets/ccrb/downloads/excel/ccrb_datatransparencyinitiative_20170207.xlsx', destfile = 'ccrb_datatransparencyinitiative_20170207.xlsx', mode = 'wb')
+```
+
+```{r}
+# I treat "NA", "Other/NA", "Other", "Others" as "non-complete" information. Depending on how you treat what value to be considered as "non-complete" information, our answers may vary.
+complaints <- read_xlsx('ccrb_datatransparencyinitiative_20170207.xlsx', 2, na=c('NA','Other/NA','Other','Others'))
+```
+
+```{r eval=FALSE}
+for (i in 5:ncol(complaints)){
+  print(table(complaints[i],useNA = 'ifany'))
+}
+```
+
+```{r eval=FALSE}
+summary(complaints)
+```
+
+1. How many unique complaints (identified by 'UniqueComplaintId') with complete information (i.e. there are no missing values) appear in the dataset? 
+```{r}
+complaints_complete <- na.omit(complaints)
+n_distinct(complaints_complete$UniqueComplaintId)
+```
+
+2. What proportion of complaints occur in the borough with the largest number of complaints? For this question, only consider unique complaints with complete information.
+```{r}
+complaints_complete %>%
+  group_by(`Borough of Occurrence`) %>%
+  summarise(num_UniqueComplaintId=n_distinct(UniqueComplaintId)) %>%
+  mutate(prop=num_UniqueComplaintId/sum(num_UniqueComplaintId)) %>%
+  arrange(desc(prop))
+```
+
+3. How many complaints per 100k residents were there in the borough with the highest number of complaints per capita resulting from incidents in 2016? Find the [2016 population estimates of each borough on Wikipedia](https://en.wikipedia.org/wiki/Demographics_of_New_York_City). Ignore complaints from "Outside NYC". For this question, only consider unique complaints with complete information. 
+```{r}
+complaints_complete %>%
+  filter(`Incident Year`==2016,`Borough of Occurrence`!='Outside NYC') %>%
+  group_by(`Borough of Occurrence`) %>%
+  summarise(num_UniqueComplaintId_2016=n_distinct(UniqueComplaintId)) %>%
+  arrange(desc(num_UniqueComplaintId_2016)) %>%
+  mutate(population_2016=c(2629150,1643734,1455720,2333054,476015),
+         complaints_per_capita_2016=num_UniqueComplaintId_2016/population_2016,
+         complaints_per_100k_residents_2016=complaints_per_capita_2016*100000) %>% 
+  arrange(desc(complaints_per_100k_residents_2016))
+```
+
+4. What is the average number of years it takes for a complaint to be closed? For this question, only consider unique complaints with complete information.
+```{r}
+complaints_complete %>%
+  group_by(UniqueComplaintId) %>%
+  summarise(years_for_closing_the_complaint=mean(`Close Year`)-mean(`Received Year`)) %>%
+  summarise(mean_years_for_closing_the_complaint=mean(years_for_closing_the_complaint))
+```
+
+5. Complaints about stop and frisk have been declining. Use linear regression from the year complaints about stop and frisk peaked through 2016 (inclusive) to predict how many stop and frisk incidents in 2018 will eventually lead to a complaint. For this question, only consider unique complaints with complete information. Remember that the count of complaints must be an integer (round to nearest). 
+```{r}
+complaints_complete %>%
+  filter(`Complaint Contains Stop & Frisk Allegations`==T) %>%
+  group_by(`Incident Year`) %>%
+  summarise(num_UniqueComplaintId=n_distinct(UniqueComplaintId)) %>%
+  arrange(desc(num_UniqueComplaintId))
+```
+
+```{r}
+predict <- complaints_complete %>%
+  filter(`Complaint Contains Stop & Frisk Allegations`==T,
+         `Incident Year`%in%2007:2016) %>%
+  group_by(`Incident Year`) %>%
+  summarise(num_UniqueComplaintId=n_distinct(UniqueComplaintId))
+
+mod <- lm(num_UniqueComplaintId ~ `Incident Year`, predict)
+
+rbind(predict, c(2018,NA)) %>%
+  add_predictions(mod)
+```
+
+6. Calculate the chi-square test statistic for testing whether a complaint is more likely to receive a full investigation when it has video evidence. For this question, only consider unique complaints with complete information. 
+```{r}
+chisq.test(table(complaints_complete$`Is Full Investigation`,complaints_complete$`Complaint Has Video Evidence`))
+```
+
+```{r}
+library(gmodels)
+CrossTable(complaints_complete$`Is Full Investigation`,complaints_complete$`Complaint Has Video Evidence`,prop.t=F, prop.r=F, prop.c=F,prop.chisq=F,chisq=T)
+```
+
+7. Each row in the data set corresponds with a specific allegation. Therefore a particular complaint, designated by 'UniqueComplaintId', may have multiple allegations. Consider only allegations with complete information. Is the presence of a certain type of allegation (i.e. 'Allegation FADO Type') indicative that a complaint will contain multiple allegations? Create indicator variables for whether a complaint contains each type of allegation, and perform a linear regression of the number of allegations per complaint against these indicator variables. What is the maximum coefficient of the linear regression? 
+```{r}
+table(complaints_complete$`Allegation FADO Type`)
+```
+
+```{r}
+FADO_predict <- complaints_complete %>%
+  transmute(UniqueComplaintId,
+            `Allegation FADO Type`,
+            contains_Abuse_of_Authority=`Allegation FADO Type`=='Abuse of Authority',
+            contains_Discourtesy=`Allegation FADO Type`=='Discourtesy',
+            contains_Force=`Allegation FADO Type`=='Force',
+            contains_Offensive_Language=`Allegation FADO Type`=='Offensive Language') %>%
+  group_by(UniqueComplaintId) %>%
+  summarise_at(3:6,max)
+
+num_Allegations <- complaints_complete %>%
+  group_by(UniqueComplaintId) %>%
+  summarise(num_Allegations=n())
+
+FADO_predict <- left_join(num_Allegations,FADO_predict)
+```
+
+```{r}
+coef(lm(num_Allegations ~ 
+          contains_Abuse_of_Authority+contains_Discourtesy+
+          contains_Force+contains_Offensive_Language
+          ,FADO_predict))
+```
+
+8. According to [NYC.gov](http://www1.nyc.gov/site/nypd/about/about-nypd/about-nypd-landing.page) there are approximately 36000 officers in New York. The website additionally [lists information on all the precincts](https://www1.nyc.gov/site/nypd/bureaus/patrol/precincts-landing.page) in each borough. Consider unique complaints (not necessarily with complete information) from incidents in 2016. Assuming that complaints per capita are proportional to officers per capita in each borough, calculate the average number of officers per precinct in each borough (ignore complaints from outside of NYC). What is the ratio of the highest number of officers per precinct to the lowest number of officers per precinct? 
+```{r}
+complaints %>%
+  filter(!`Borough of Occurrence`%in%c('Outside NYC',NA),`Incident Year`==2016) %>%
+  group_by(`Borough of Occurrence`) %>%
+  summarise(num_UniqueComplaintId_2016=n_distinct(UniqueComplaintId)) %>%
+  mutate(num_precinct=c(12,23,22,16,4),
+         proxy_num_officer_per_precinct=num_UniqueComplaintId_2016/num_precinct
+         ) %>%
+  summarise(ratio=max(proxy_num_officer_per_precinct)/min(proxy_num_officer_per_precinct))
+```
+
